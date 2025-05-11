@@ -8,7 +8,7 @@ import serial.tools.list_ports
 import csv
 from collections import Counter
 import platform
-
+import random
 
 # Load YOLOv8 model
 model = YOLO('../model_dev/runs/detect/train/weights/best.pt')
@@ -25,11 +25,9 @@ if not os.path.exists(csv_file):
         writer.writerow(['Plate Number', 'Payment Status', 'Timestamp'])
 
 # ===== Auto-detect Arduino Serial Port =====
-
 def detect_arduino_port():
     ports = list(serial.tools.list_ports.comports())
     system = platform.system()
-
     for port in ports:
         if system == "Linux":
             if "ttyUSB" in port.device or "ttyACM" in port.device:
@@ -51,13 +49,39 @@ else:
     print("[ERROR] Arduino not detected.")
     arduino = None
 
-# ===== Ultrasonic Sensor Setup =====
-import random
+# ===== Mock Ultrasonic Sensor Setup =====
 def mock_ultrasonic_distance():
     return random.choice([random.randint(10, 40)] + [random.randint(60, 150)] * 10)
 
-# Initialize webcam
-cap = cv2.VideoCapture(0)
+# ===== Camera Detection Setup =====
+def find_working_camera():
+    for i in range(5):
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            ret, _ = cap.read()
+            cap.release()
+            if ret:
+                print(f"[CAMERA] Using /dev/video{i}")
+                return i
+    print("[ERROR] No working camera found.")
+    return None
+
+cam_index = find_working_camera()
+if cam_index is None:
+    exit("[FATAL] Exiting: No camera available.")
+
+# Initialize webcam with detected camera index
+for api in [cv2.CAP_V4L2, cv2.CAP_ANY, cv2.CAP_GSTREAMER, cv2.CAP_FFMPEG]:
+    cap = cv2.VideoCapture(0, api)
+    if cap.isOpened():
+        cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        ret, frame = cap.read()
+        print(f"API {api} opened camera, frame read: {ret}")
+        cap.release()
+
+
 plate_buffer = []
 entry_cooldown = 300  # 5 minutes
 last_saved_plate = None
@@ -113,7 +137,7 @@ while True:
 
                                     with open(csv_file, 'a', newline='') as f:
                                         writer = csv.writer(f)
-                                        writer.writerow([most_common, 0,time.strftime('%Y-%m-%d %H:%M:%S')])
+                                        writer.writerow([most_common, 0, time.strftime('%Y-%m-%d %H:%M:%S')])
                                     print(f"[SAVED] {most_common} logged to CSV.")
 
                                     if arduino:
